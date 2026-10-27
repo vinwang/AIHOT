@@ -5,7 +5,11 @@ import { SITE } from "../site.ts";
 export function Wordmark({ size = 24, className = "", title = SITE.name }: { size?: number; className?: string; title?: string }) {
   return (
     <span className={`inline-flex items-center font-black leading-none tracking-[-0.03em] ${className}`} style={{ fontSize: Math.round(size * 0.92) }} aria-label={title} role="img">
-      <span aria-hidden="true" className="mr-[0.3em] inline-block size-[0.42em] rounded-full bg-accent" />
+      <svg aria-hidden="true" viewBox="0 0 512 512" className="mr-[0.3em] inline-block size-[0.95em]">
+        <rect width="512" height="512" rx="116" fill="var(--accent)" />
+        <path d="M352 176C352 124 160 124 160 196C160 268 352 244 352 316C352 388 160 388 160 336" fill="none" stroke="var(--accent-contrast)" strokeWidth="52" strokeLinecap="round" />
+        <circle cx="388" cy="124" r="28" fill="#ffc861" />
+      </svg>
       <span aria-hidden="true">{SITE.name}</span>
     </span>
   );

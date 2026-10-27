@@ -1,5 +1,7 @@
 # docker compose up -d --build     → http://localhost:3000   (the admin is at /admin)
 # docker compose --profile https up -d --build   → HTTPS for SITE_DOMAIN through Caddy
+# Runs no database container: DATABASE_URL in .env points at the PostgreSQL already running on the
+# host (or wherever the containers can reach it).
 name: aihot
 
 x-app: &app
@@ -12,33 +14,21 @@ x-backend: &backend
   env_file: .env
   environment: &backend-env
     NODE_ENV: production
-    DATABASE_URL: postgres://aihot:${POSTGRES_PASSWORD:-aihot}@db:5432/aihot
+    # .env holds the connection string as seen from inside the container, e.g.
+    # postgres://aihot:secret@host.docker.internal:5432/aihot
+    DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env, e.g. postgres://aihot:secret@host.docker.internal:5432/aihot}
     AIHOT_DATA_DIR: /data
     API_BASE_URL: http://api:3001
     # No proxy in front limits pushes to /api/ingest/items: the api does (per client and minute; 0 turns it off).
     INGEST_RATE_LIMIT: ${INGEST_RATE_LIMIT:-10}
+  # Reaches the PostgreSQL on the Docker host. Docker Desktop resolves host.docker.internal by
+  # itself; on Linux this mapping is what makes the name work.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   volumes:
     - data:/data
-  depends_on:
-    db:
-      condition: service_healthy
 
 services:
-  db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: aihot
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aihot}
-      POSTGRES_DB: aihot
-    volumes:
-      - db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aihot -d aihot"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-
   # Applies the database migrations and seeds the demo sources, then exits.
   setup:
     <<: *backend
@@ -100,6 +90,5 @@ services:
       - web
 
 volumes:
-  db: {}
   data: {}
   caddy: {}

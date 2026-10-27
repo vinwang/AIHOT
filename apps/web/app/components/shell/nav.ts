@@ -3,9 +3,7 @@
 import type { ReactNode } from "react";
 import { NAV, subjectAfter, withSubject } from "@aihot/site";
 import { webModules } from "../../site-modules";
-import {
-  IconBolt, IconBookmark, IconDoc, IconFlame, IconGrid, IconHeart, IconHistory, IconList, IconMessage, IconPlug, IconUser,
-} from "../icons";
+import { IconBolt, IconBookmark, IconDoc, IconFlame, IconGrid, IconList, IconUser } from "../icons";
 
 export interface NavItem {
   to: string;
@@ -29,15 +27,6 @@ const SECTIONS: Array<{ title: string; items: NavItem[] }> = [
       { to: "/starred", label: "收藏", icon: IconBookmark },
     ],
   },
-  {
-    title: "更多",
-    items: [
-      { to: "/agent", label: "Agent 接入", icon: IconPlug },
-      { to: "/about", label: "关于", icon: IconHeart },
-      { to: "/changelog", label: "更新日志", icon: IconHistory, changelog: true },
-      { to: "/feedback", label: "反馈", icon: IconMessage },
-    ],
-  },
 ];
 
 /** Whether an engine page is a way in from the navigation (site.ts NAV.hidden); a hidden page still opens. */
@@ -58,21 +47,16 @@ export function navUp(entry: keyof typeof UP): { to: string; name: string; back:
   return { to: entry, ...UP[entry], crumbs: [{ name: UP[entry].name, path: entry }] };
 }
 
-/**
- * The sidebar: the engine's sections with the modules' between 内容 and 更多; a module naming a section
- * that is already there adds to it.
- */
+/** The sidebar: the engine's sections with the modules'; a module naming a section that is already there adds to it. */
 export function sidebar(): Array<{ title: string; items: NavItem[] }> {
-  const [content, ...rest] = SECTIONS;
-  const more = rest.pop()!;
-  const sections = [content!, ...rest].map((s) => ({ ...s, items: s.items.filter((i) => inNav(i.to)) }));
+  const sections = SECTIONS.map((s) => ({ ...s, items: s.items.filter((i) => inNav(i.to)) }));
   for (const m of webModules()) {
     if (!m.sidebar) continue;
     const section = sections.find((s) => s.title === m.sidebar!.section);
     if (section) section.items.push(...m.sidebar.items);
     else sections.push({ title: m.sidebar.section, items: [...m.sidebar.items] });
   }
-  return [...sections, more];
+  return sections;
 }
 
 /** A sidebar entry is lit on its pages; 日报 also covers weekly and monthly reports. */
