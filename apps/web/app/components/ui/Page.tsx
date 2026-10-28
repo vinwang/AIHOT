@@ -29,12 +29,12 @@ export function ArticleLayout({ children, left, right }: { children: ReactNode; 
   const [leftRail, leftOverscroll] = useContainedScroll<HTMLDivElement>();
   const [rightRail, rightOverscroll] = useContainedScroll<HTMLDivElement>();
   return (
-    <div className="mx-auto grid max-w-[var(--page-max-reading)] grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_240px] lg:gap-x-12 2xl:grid-cols-[minmax(200px,1fr)_minmax(0,760px)_minmax(200px,1fr)] 2xl:gap-x-12">
+    <div className="mx-auto grid max-w-[var(--page-max-reading)] grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_240px] lg:gap-x-12 2xl:grid-cols-[minmax(200px,1fr)_minmax(0,var(--article-w))_minmax(200px,1fr)] 2xl:gap-x-12">
       <aside className="hidden 2xl:block">
         <div ref={leftRail} className={`scrollbar-thin sticky top-6 flex max-h-[calc(100vh-3rem)] max-w-[260px] flex-col space-y-8 overflow-y-auto ${leftOverscroll}`}>{left}</div>
       </aside>
       <div className="min-w-0">
-        <div className="mx-auto max-w-[760px]">{children}</div>
+        <div className="mx-auto max-w-[var(--article-w)]">{children}</div>
       </div>
       <aside className="hidden lg:block">
         <div ref={rightRail} className={`scrollbar-thin sticky top-6 ml-auto flex max-h-[calc(100vh-3rem)] max-w-[260px] flex-col space-y-8 overflow-y-auto ${rightOverscroll}`}>{right}</div>

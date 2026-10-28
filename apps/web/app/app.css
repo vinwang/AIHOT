@@ -86,6 +86,8 @@
      and a 21:9 screen one of about 2.7:1. 236px is the sidebar and the main area's padding. */
   --page-max-wide: max(1200px, calc(270dvh - 236px));
   --page-max-reading: max(1100px, calc(200dvh - 236px));
+  /* The text column of a long read: 760px on laptops, growing with the screen to 980px so a wide window is not mostly margin. */
+  --article-w: clamp(760px, 46vw, 980px);
   /* The phone shell (below lg): the top bar's height, which sticky headers inside pages sit below, and
      side gutters that keep clear of the notch in landscape. The desktop shell has no top bar. */
   --bar-h: 48px;
@@ -450,6 +452,9 @@
 }
 @media (min-width: 80rem) {
   .prose { font-size: 18px; }
+}
+@media (min-width: 120rem) {
+  .prose { font-size: 20px; }
 }
 .prose > * + * { margin-top: 1.2em; }
 .prose p { margin: 0; }
