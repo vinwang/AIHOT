@@ -128,6 +128,13 @@ function requestFor<S extends z.ZodType>(opts: ChatJsonOptions<S>, spec: ModelSp
   return { request, temperature, maxTokens, userText };
 }
 
+/** Whether this exact request already has a receipt, including an unresolved attempt. */
+export async function hasChatReceipt<S extends z.ZodType>(opts: ChatJsonOptions<S>): Promise<boolean> {
+  const spec = MODELS[opts.model];
+  if (!spec) throw new Error(`Unknown model ${opts.model}`);
+  return (await receiptState(requestFor(opts, spec).request)) !== null;
+}
+
 /** A call without a backup waits this long for its answer. */
 const TIMEOUT_MS = 120_000;
 /**

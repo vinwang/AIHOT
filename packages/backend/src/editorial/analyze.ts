@@ -17,7 +17,7 @@ import { CATEGORIES } from "@aihot/industry/taxonomy";
 import { SELECTION } from "@aihot/industry/selection";
 import { ITEM_COPY } from "@aihot/site";
 import { sql } from "../db.ts";
-import { chatJson, MODELS, type ContentPart } from "../providers/llm.ts";
+import { chatJson, hasChatReceipt, MODELS, type ContentPart } from "../providers/llm.ts";
 import { completeReceipt, failedReceiptId, failureKind } from "../providers/receipts.ts";
 import { collapseWhitespace } from "../lib/text.ts";
 import { modelFor, modelRoute, modelSupportsVision } from "./models.ts";
@@ -159,6 +159,14 @@ export const STRUCTURE_SYSTEM = promptText("structure", {
   entityTags: ENTITY_TAGS.join("、"),
   entities: Object.entries(ENTITIES).map(([id, e]) => `${id}（${e.aliases.slice(0, 3).join("/")}）`).join("，"),
 });
+
+export const STRUCTURE_UNDERSTAND_SYSTEM = [
+  "分别执行以下结构抽取和内容理解任务。各任务中的输出格式只约束该任务的结果。",
+  "【结构抽取规则】", STRUCTURE_SYSTEM,
+  "【内容理解规则】", UNDERSTAND_SYSTEM,
+  "最终只输出一个 JSON 对象：structure 为结构抽取的完整结果，writing 为内容理解的完整结果。",
+].join("\n\n");
+const StructureUnderstandSchema = z.object({ structure: StructureSchema, writing: UnderstandSchema });
 
 /** Keep only quotes present both in the original material and in the text the structure model saw. */
 export function normalizeStructure(data: z.infer<typeof StructureSchema>, a: AnalyzeInputArticle) {
@@ -312,10 +320,8 @@ export async function runSelectionScores(
   return threshold === null ? null : runScores(a, threshold, opts, onReceipt);
 }
 
-export async function runStructure(a: AnalyzeInputArticle, opts: StepOpts = {}): Promise<NonNullable<AnalysisRun["structure"]>> {
-  const model = await modelFor("structure");
-  checkAnalysisRunning();
-  const res = await chatJson({
+function structureRequest(a: AnalyzeInputArticle, opts: StepOpts, model: string) {
+  return {
     model,
     purpose: "structure_article",
     subject: subjectOf(a),
@@ -326,21 +332,65 @@ export async function runStructure(a: AnalyzeInputArticle, opts: StepOpts = {}):
     temperature: 0.2,
     maxTokens: 1200,
     attemptTag: tagged(opts.attemptTag, "structure"),
-  });
+  };
+}
+
+export async function runStructure(a: AnalyzeInputArticle, opts: StepOpts = {}): Promise<NonNullable<AnalysisRun["structure"]>> {
+  const model = await modelFor("structure");
+  checkAnalysisRunning();
+  const res = await chatJson(structureRequest(a, opts, model));
   return { ...normalizeStructure(res.data, a), model: res.model, receiptId: res.receiptId, reused: res.reused };
+}
+
+function understoodWriting(
+  a: AnalyzeInputArticle,
+  res: { data: z.infer<typeof UnderstandSchema>; model: string; receiptId: number; reused: boolean },
+): NonNullable<AnalysisRun["writing"]> {
+  const d = res.data;
+  const copy = finalizeCopy(translateInputOf(a), { titleZh: d.titleZh, summaryZh: d.summaryZh });
+  return {
+    kind: "understand", model: res.model, titleZh: copy.titleZh, summaryZh: copy.summaryZh, reasonZh: d.editorialJudgment.trim() || null,
+    itemType: d.itemType, authorRole: d.authorRole, identityGuard: copy.identityGuard, receiptIds: [res.receiptId], reused: res.reused,
+  };
+}
+
+async function runStructureUnderstand(
+  a: AnalyzeInputArticle, opts: StepOpts, model: string, structureInput: string, writingInput: string,
+): Promise<{ structure: NonNullable<AnalysisRun["structure"]>; writing: NonNullable<AnalysisRun["writing"]> } | null> {
+  checkAnalysisRunning();
+  try {
+    const res = await chatJson({
+      model, purpose: "understand_article", subject: subjectOf(a),
+      promptVersion: `${PROMPT_VERSIONS.structure}+${PROMPT_VERSIONS.understand}`, system: STRUCTURE_UNDERSTAND_SYSTEM,
+      user: `【结构抽取材料】\n${structureInput}\n\n【内容理解材料】\n${writingInput}`,
+      schema: StructureUnderstandSchema, temperature: 0.2, maxTokens: 16_384, timeoutMs: 180_000,
+      attemptTag: tagged(opts.attemptTag, "structure-understand"),
+    });
+    return {
+      structure: { ...normalizeStructure(res.data.structure, a), model: res.model, receiptId: res.receiptId, reused: res.reused },
+      writing: understoodWriting(a, { ...res, data: res.data.writing }),
+    };
+  } catch (error) {
+    if (isContentFilter(error)) return null;
+    throw error;
+  }
+}
+
+function understandRequest(a: AnalyzeInputArticle, opts: StepOpts, model: string, image: ContentPart | null) {
+  const text = understandUser(a);
+  return {
+    model, purpose: "understand_article", subject: subjectOf(a), promptVersion: PROMPT_VERSIONS.understand, system: UNDERSTAND_SYSTEM,
+    user: image ? [{ type: "text", text } as ContentPart, image] : text, schema: UnderstandSchema, temperature: 0.2, maxTokens: 16_384,
+    timeoutMs: 180_000, attemptTag: tagged(opts.attemptTag, "understand"),
+  };
 }
 
 /** Content understanding grounded in the original; null on a content-filter refusal. */
 export async function runUnderstand(a: AnalyzeInputArticle, opts: StepOpts = {}): Promise<AnalysisRun["writing"]> {
   const model = await modelFor("understand");
-  const text = understandUser(a);
   const call = (image: ContentPart | null) => {
     checkAnalysisRunning();
-    return chatJson({
-      model, purpose: "understand_article", subject: subjectOf(a), promptVersion: PROMPT_VERSIONS.understand, system: UNDERSTAND_SYSTEM,
-      user: image ? [{ type: "text", text }, image] : text, schema: UnderstandSchema, temperature: 0.2, maxTokens: 16_384,
-      timeoutMs: 180_000, attemptTag: tagged(opts.attemptTag, "understand"),
-    });
+    return chatJson(understandRequest(a, opts, model, image));
   };
   // Image input is opt-in: an unspecified capability must not become a paid provider probe.
   const image = modelSupportsVision(model) ? await firstImagePart(a) : null;
@@ -358,12 +408,7 @@ export async function runUnderstand(a: AnalyzeInputArticle, opts: StepOpts = {})
       throw retryError;
     }
   }
-  const d = res.data;
-  const copy = finalizeCopy(translateInputOf(a), { titleZh: d.titleZh, summaryZh: d.summaryZh });
-  return {
-    kind: "understand", model: res.model, titleZh: copy.titleZh, summaryZh: copy.summaryZh, reasonZh: d.editorialJudgment.trim() || null,
-    itemType: d.itemType, authorRole: d.authorRole, identityGuard: copy.identityGuard, receiptIds: [res.receiptId], reused: res.reused,
-  };
+  return understoodWriting(a, res);
 }
 
 export const MEND_SYSTEM = promptText("mend-wording", { reasonLabel: ITEM_COPY.reasonLabel });
@@ -481,13 +526,34 @@ export async function runAnalysis(a: AnalyzeInputArticle, opts: StepOpts = {}): 
   const prefilter = await runSelectionPrefilter(a, opts);
   if (prefilter.label === "BLOCK") return { prefilter, scores: null, writing: null, structure: null };
   const original = originalPostCopy(a.xPost, a.url);
-  // The structure step needs nothing from the scores: it runs beside them.
-  const structure = runStructure(a, opts).then((value) => ({ value }), (error: unknown) => ({ error }));
+  const structureModel = await modelFor("structure");
+  const understandingModel = await modelFor("understand");
+  const hasImage = [...(a.xPost?.media ?? []), ...(a.xPost?.quoted?.media ?? []), ...a.media].some((m) => m.kind === "image" && m.url);
+  const structureInput = buildMaterial(a);
+  const writingInput = understandUser(a);
+  // A combined input stays within the existing body budget; image-aware writing keeps its own call.
+  const combine = !original && structureModel === understandingModel && !(hasImage && modelSupportsVision(understandingModel))
+    && structureInput.length + writingInput.length <= MAX_BODY_CHARS;
+  const structure = combine ? null : runStructure(a, opts).then((value) => ({ value }), (error: unknown) => ({ error }));
   try {
     const scores = await runSelectionScores(a, opts);
     const sum = scoreSum(scores);
     const near = scoresSelect(scores) || (sum !== null && sum > UNDERSTAND_FLOOR * SCORE_CALLS);
-    const s = await structure;
+    if (combine && near && await modelFor("structure") === structureModel && await modelFor("understand") === understandingModel) {
+      // Existing separate receipts must finish or be reused before sending a different paid request.
+      const prior = await Promise.all([
+        hasChatReceipt(structureRequest(a, opts, structureModel)),
+        hasChatReceipt(understandRequest(a, opts, understandingModel, null)),
+      ]);
+      if (!prior.some(Boolean)) {
+        const both = await runStructureUnderstand(a, opts, structureModel, structureInput, writingInput);
+        if (both) return { prefilter, scores, writing: await mendWording(a, both.writing, opts), structure: both.structure };
+        const separate = await runStructure(a, opts);
+        const writing = await runUnderstand(a, opts) ?? await runSummarize(a, opts);
+        return { prefilter, scores, writing: await mendWording(a, writing, opts), structure: separate };
+      }
+    }
+    const s = await (structure ?? runStructure(a, opts).then((value) => ({ value }), (error: unknown) => ({ error })));
     if ("error" in s) throw s.error;
     const writing: NonNullable<AnalysisRun["writing"]> = original
       ? { kind: "verbatim", model: null, titleZh: original.title, summaryZh: original.summary ?? "", reasonZh: null, receiptIds: [], reused: true }
@@ -496,7 +562,7 @@ export async function runAnalysis(a: AnalyzeInputArticle, opts: StepOpts = {}): 
   } finally {
     // A score/writing error or deploy must not let the job finish while a paid structure request
     // still owns a response. It settles and stores its receipt before shutdown can close the DB.
-    await structure;
+    if (structure) await structure;
   }
 }
 
@@ -557,10 +623,10 @@ export async function analyzeArticle(articleId: string, opts: StepOpts = {}): Pr
   if (waitsForPage(input)) return { analysisId: null, stale: false, needsBody: true, output: null, receiptIds: [], reused: true };
   const run = await runAnalysis(input, opts);
   const out = normalizeAnalysis(run);
-  const receiptIds = [
+  const receiptIds = [...new Set([
     ...(run.prefilter ? [run.prefilter.receiptId] : []), ...(run.scores?.receiptIds ?? []), ...(run.writing?.receiptIds ?? []),
     ...(run.structure ? [run.structure.receiptId] : []),
-  ];
+  ])];
   const w = run.writing;
   const detail = {
     prefilter: run.prefilter && { label: run.prefilter.label, reason: run.prefilter.reason },
